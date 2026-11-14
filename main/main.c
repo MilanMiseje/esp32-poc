@@ -1,4 +1,5 @@
 #include "button.h"
+#include "http_server.h"
 #include "led.h"
 #include "wifi.h"
 
@@ -13,6 +14,7 @@ void app_main(void)
     ESP_ERROR_CHECK(led_init());
     ESP_ERROR_CHECK(button_init());
     ESP_ERROR_CHECK(wifi_start());
+    ESP_ERROR_CHECK(http_server_start());
 
     while (1) {
         if (button_was_pressed()) {
