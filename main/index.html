@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="sk">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ESP32 LED</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            max-width: 32rem;
+            margin: 3rem auto;
+            padding: 0 1rem;
+        }
+
+        button {
+            font-size: 1.2rem;
+            padding: .7rem 1.2rem;
+            margin: .5rem;
+        }
+
+        input[type=range] {
+            width: 100%;
+        }
+    </style>
+</head>
+<body>
+    <h1>Ovládanie LED</h1>
+    <button id="led-on" type="button">Zapnúť</button>
+    <button id="led-off" type="button">Vypnúť</button>
+    <p>
+        <label for="brightness">
+            Intenzita: <output id="brightness-value">100%</output>
+        </label>
+    </p>
+    <input id="brightness" type="range" min="0" max="100" value="100">
+    <p id="status" aria-live="polite">Pripravené</p>
+    <script>
+        const slider = document.getElementById('brightness');
+        const brightnessValue = document.getElementById('brightness-value');
+        const status = document.getElementById('status');
+        const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const socket = new WebSocket(wsProtocol + '//' + location.host + '/ws');
+        let pendingBrightness = null;
+        let sendTimer = null;
+
+        socket.addEventListener('open', () => {
+            status.textContent = 'WebSocket pripojený.';
+            sendBrightness();
+        });
+
+        socket.addEventListener('message', event => {
+            if (typeof event.data !== 'string') return;
+            if (event.data.startsWith('ERR:')) {
+                status.textContent = 'Chyba pri nastavovaní intenzity: ' + event.data.slice(4);
+            } else if (event.data.startsWith('OK:')) {
+                const appliedValue = event.data.slice(3);
+                if (appliedValue === slider.value) {
+                    status.textContent = 'Intenzita LED: ' + appliedValue + '%';
+                }
+            }
+        });
+
+        socket.addEventListener('close', () => {
+            status.textContent = 'WebSocket je odpojený.';
+        });
+
+        socket.addEventListener('error', () => {
+            status.textContent = 'Chyba WebSocket spojenia.';
+        });
+
+        async function setLed(state) {
+            status.textContent = 'Odosielam...';
+            try {
+                const response = await fetch('/led/' + state, { method: 'POST' });
+                if (!response.ok) throw new Error('HTTP ' + response.status);
+                status.textContent = state === 'on' ? 'LED je zapnutá.' : 'LED je vypnutá.';
+            } catch (error) {
+                status.textContent = 'Chyba pri ovládaní LED: ' + error.message;
+            }
+        }
+
+        async function loadBrightness() {
+            try {
+                const response = await fetch('/led/brightness');
+                if (!response.ok) throw new Error('HTTP ' + response.status);
+                slider.value = await response.text();
+                brightnessValue.textContent = slider.value + '%';
+            } catch (error) {
+                status.textContent = 'Nepodarilo sa načítať intenzitu: ' + error.message;
+            }
+        }
+
+        function sendBrightness() {
+            if (pendingBrightness === null || socket.readyState !== WebSocket.OPEN) return;
+            if (socket.bufferedAmount > 64) {
+                if (sendTimer === null) {
+                    sendTimer = setTimeout(() => {
+                        sendTimer = null;
+                        sendBrightness();
+                    }, 16);
+                }
+                return;
+            }
+            const value = pendingBrightness;
+            pendingBrightness = null;
+            socket.send(value);
+        }
+
+        slider.addEventListener('input', () => {
+            brightnessValue.textContent = slider.value + '%';
+            status.textContent = 'Odosielam...';
+            pendingBrightness = slider.value;
+            sendBrightness();
+        });
+
+        document.getElementById('led-on').addEventListener('click', () => setLed('on'));
+        document.getElementById('led-off').addEventListener('click', () => setLed('off'));
+        loadBrightness();
+    </script>
+</body>
+</html>

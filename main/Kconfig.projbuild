@@ -1,5 +1,10 @@
 menu "ESP32 POC Wi-Fi"
 
+config POC_HTTPD_WS_SUPPORT
+    bool
+    default y
+    select HTTPD_WS_SUPPORT
+
 config POC_WIFI_SSID
     string "Wi-Fi SSID"
     default ""

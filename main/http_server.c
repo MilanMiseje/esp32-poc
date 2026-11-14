@@ -2,6 +2,8 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
 
 #include "esp_err.h"
 #include "esp_http_server.h"
@@ -10,35 +12,7 @@
 
 static const char *TAG = "http_server";
 static httpd_handle_t server;
-
-static const char index_html[] =
-    "<!doctype html>"
-    "<html lang=\"sk\"><head><meta charset=\"utf-8\">"
-    "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
-    "<title>ESP32 LED</title>"
-    "<style>"
-    "body{font-family:sans-serif;max-width:32rem;margin:3rem auto;padding:0 1rem}"
-    "button{font-size:1.2rem;padding:.7rem 1.2rem;margin:.5rem}"
-    "</style></head><body><h1>Ovládanie LED</h1>"
-    "<button id=\"led-on\" type=\"button\">Zapnúť</button>"
-    "<button id=\"led-off\" type=\"button\">Vypnúť</button>"
-    "<p id=\"status\" aria-live=\"polite\">Pripravené</p>"
-    "<script>"
-    "async function setLed(state){"
-    "const status=document.getElementById('status');"
-    "status.textContent='Odosielam...';"
-    "try{"
-    "const response=await fetch('/led/'+state,{method:'POST'});"
-    "if(!response.ok)throw new Error('HTTP '+response.status);"
-    "status.textContent=state==='on'?'LED je zapnutá.':'LED je vypnutá.';"
-    "}catch(error){"
-    "status.textContent='Chyba pri ovládaní LED: '+error.message;"
-    "}"
-    "}"
-    "document.getElementById('led-on').addEventListener('click',()=>setLed('on'));"
-    "document.getElementById('led-off').addEventListener('click',()=>setLed('off'));"
-    "</script>"
-    "</body></html>";
+extern const char index_html_start[] asm("_binary_index_html_start");
 
 static esp_err_t index_handler(httpd_req_t *request)
 {
@@ -46,7 +20,7 @@ static esp_err_t index_handler(httpd_req_t *request)
     if (err != ESP_OK) {
         return err;
     }
-    return httpd_resp_send(request, index_html, HTTPD_RESP_USE_STRLEN);
+    return httpd_resp_send(request, index_html_start, HTTPD_RESP_USE_STRLEN);
 }
 
 static esp_err_t set_led_from_request(httpd_req_t *request, bool is_on)
@@ -75,6 +49,97 @@ static esp_err_t led_off_handler(httpd_req_t *request)
     return set_led_from_request(request, false);
 }
 
+static esp_err_t brightness_get_handler(httpd_req_t *request)
+{
+    uint8_t percent;
+    esp_err_t err = led_get_brightness(&percent);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to get LED brightness: %s", esp_err_to_name(err));
+        return httpd_resp_send_err(request, HTTPD_500_INTERNAL_SERVER_ERROR,
+                                   "Failed to get LED brightness");
+    }
+
+    char response[4];
+    const int response_length = snprintf(response, sizeof(response), "%u",
+                                         (unsigned)percent);
+    if (response_length < 0 || (size_t)response_length >= sizeof(response)) {
+        return httpd_resp_send_err(request, HTTPD_500_INTERNAL_SERVER_ERROR,
+                                   "Failed to format LED brightness");
+    }
+
+    err = httpd_resp_set_type(request, "text/plain");
+    if (err != ESP_OK) {
+        return err;
+    }
+    return httpd_resp_send(request, response, response_length);
+}
+
+static esp_err_t websocket_send_text(httpd_req_t *request, uint8_t *payload,
+                                     size_t length)
+{
+    httpd_ws_frame_t frame = {
+        .type = HTTPD_WS_TYPE_TEXT,
+        .payload = payload,
+        .len = length,
+    };
+    return httpd_ws_send_frame(request, &frame);
+}
+
+static esp_err_t websocket_handler(httpd_req_t *request)
+{
+    httpd_ws_frame_t frame = {0};
+    esp_err_t err = httpd_ws_recv_frame(request, &frame, 0);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to read WebSocket frame length: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    if (frame.len > 16) {
+        return ESP_ERR_INVALID_SIZE;
+    }
+
+    uint8_t payload[17] = {0};
+    frame.payload = payload;
+    err = httpd_ws_recv_frame(request, &frame, sizeof(payload) - 1);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to read WebSocket payload: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    if (frame.type != HTTPD_WS_TYPE_TEXT || frame.len == 0 || frame.len > 3) {
+        static uint8_t error[] = "ERR:range";
+        return websocket_send_text(request, error, sizeof(error) - 1);
+    }
+
+    unsigned percent = 0;
+    for (size_t i = 0; i < frame.len; i++) {
+        if (payload[i] < '0' || payload[i] > '9') {
+            static uint8_t error[] = "ERR:range";
+            return websocket_send_text(request, error, sizeof(error) - 1);
+        }
+        percent = percent * 10U + (unsigned)(payload[i] - '0');
+    }
+    if (percent > 100) {
+        static uint8_t error[] = "ERR:range";
+        return websocket_send_text(request, error, sizeof(error) - 1);
+    }
+
+    err = led_set_brightness((uint8_t)percent);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to set LED brightness: %s", esp_err_to_name(err));
+        static uint8_t error[] = "ERR:led";
+        return websocket_send_text(request, error, sizeof(error) - 1);
+    }
+
+    uint8_t response[7];
+    const int response_length = snprintf((char *)response, sizeof(response),
+                                         "OK:%u", percent);
+    if (response_length < 0 || (size_t)response_length >= sizeof(response)) {
+        return ESP_FAIL;
+    }
+    return websocket_send_text(request, response, (size_t)response_length);
+}
+
 static const httpd_uri_t handlers[] = {
     {
         .uri = "/",
@@ -90,6 +155,17 @@ static const httpd_uri_t handlers[] = {
         .uri = "/led/off",
         .method = HTTP_POST,
         .handler = led_off_handler,
+    },
+    {
+        .uri = "/led/brightness",
+        .method = HTTP_GET,
+        .handler = brightness_get_handler,
+    },
+    {
+        .uri = "/ws",
+        .method = HTTP_GET,
+        .handler = websocket_handler,
+        .is_websocket = true,
     },
 };
 
