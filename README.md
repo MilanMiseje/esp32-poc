@@ -12,6 +12,8 @@ The external LED will be connected to **GPIO23** in series with a resistor (for 
 
 Connect a momentary push button between **GPIO27** and GND. The firmware enables the ESP32's internal pull-up for the button input, so no external pull-up resistor is needed. Each press toggles the LED; the input is debounced in software.
 
+On startup, the ESP32 scans for nearby Wi-Fi networks and prints each network's SSID, signal strength, channel, and security mode to the serial monitor about every 30 seconds.
+
 ### Pinout
 
 The diagram is shown with the USB connector at the bottom. The labels in square brackets are the board pin labels; GPIO numbers are shown for GPIO pins.

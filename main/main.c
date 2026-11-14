@@ -1,5 +1,6 @@
 #include "button.h"
 #include "led.h"
+#include "wifi.h"
 
 #include "esp_check.h"
 #include "freertos/FreeRTOS.h"
@@ -11,6 +12,7 @@ void app_main(void)
 {
     ESP_ERROR_CHECK(led_init());
     ESP_ERROR_CHECK(button_init());
+    ESP_ERROR_CHECK(wifi_start());
 
     while (1) {
         if (button_was_pressed()) {
