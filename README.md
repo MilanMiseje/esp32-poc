@@ -16,7 +16,7 @@ Connect a momentary push button between **GPIO27** and GND. The firmware enables
 
 Before building, open **SDK Configuration Editor** or run **menuconfig**. Under **ESP32 POC Wi-Fi**, set the Wi-Fi SSID and password. These settings are kept in the local, git-ignored `sdkconfig`; do not commit credentials.
 
-The ESP32 connects in station mode. Once it receives an IP address, the serial monitor prints the URL for the HTTP control page. Open that URL from a device on the same network to turn the LED on or off without reloading the page. The button continues to work as well. The server has no authentication, so use it only on a trusted local network.
+The ESP32 connects in station mode. Once it receives an IP address, the serial monitor prints the URL for the HTTP control page. Open that URL from a device on the same network to turn the LED on or off and adjust its brightness without reloading the page. The button continues to work as well. The server has no authentication, so use it only on a trusted local network.
 
 ### Pinout
 
